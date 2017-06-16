@@ -4,6 +4,7 @@ import "bufio"
 import "fmt"
 import "os"
 import "regexp"
+import "strings"
 
 func ReadAuxFile(filename string) map[string] bool {
 
@@ -20,7 +21,7 @@ func ReadAuxFile(filename string) map[string] bool {
   rex := regexp.MustCompile("\\\\citation{([^\n}]+)}");
   for scanner.Scan() {
     if match := rex.FindSubmatch(scanner.Bytes()) ; match != nil {
-      sent[string(match[1])] = true
+      sent[strings.ToLower(string(match[1]))] = true
     }
   }
 
@@ -35,15 +36,15 @@ func main() {
   }
 
 
-  chbib := make(chan BibElement, 32)
-  go ReadBibFile(os.Args[2], chbib)
+  chbib := make(chan BibEntry, 32)
+  go ReadBibFiles(os.Args[2:], chbib)
 
   refset := ReadAuxFile(os.Args[1])
 
   for {
     elem, ok := <-chbib
     if !ok { break }
-    if refset[elem.name] {
+    if refset[strings.ToLower(elem.name)] {
       elem.Display(os.Stdout)
     }
   }

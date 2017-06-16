@@ -10,10 +10,8 @@ import utf8 "unicode/utf8"
 
 var display_order = []string{"author", "title", "journal", "booktitle", "year"}
 
-type BibElement struct {
-  name   string
-  btype  string
-  values map[string] string
+type BibElement interface {
+  Display(io.Writer)
 }
 
 func ReadBibFile (filename string, out chan<- BibElement) {
@@ -25,14 +23,15 @@ func ReadBibFile (filename string, out chan<- BibElement) {
     return
   }
 
-  r_begin := regexp.MustCompile("^@([^\n{]+){([^\\s,]+),\\s*$");
-  r_entry := regexp.MustCompile("^\\s*([^\\s=]+)\\s*=\\s*(.*?)(,)?\\s*$");
-  r_cont  := regexp.MustCompile("^\\s*(.*?)(,)?\\s*$");
-  r_end   := regexp.MustCompile("^}\\s*$");
+  r_string := regexp.MustCompile("^@(?i:string)\\s*{\\s*(\\S*?)\\s*=\\s*(.+?)\\s*}\\s*$")
+  r_begin  := regexp.MustCompile("^@([^\n{]+){([^\\s,]+),\\s*$");
+  r_entry  := regexp.MustCompile("^\\s*([^\\s=]+)\\s*=\\s*(.*?)(,)?\\s*$");
+  r_cont   := regexp.MustCompile("^\\s+(.*?)(,)?\\s*$");
+  r_end    := regexp.MustCompile("^}\\s*$");
 
   scanner := bufio.NewScanner(file)
 
-  var elem BibElement
+  var elem BibEntry
   var last string
   var results [][]byte
   const (
@@ -45,10 +44,11 @@ func ReadBibFile (filename string, out chan<- BibElement) {
     switch state {
 
       case s_outside:
+        if results = r_string.FindSubmatch(scanner.Bytes()) ; results != nil {
+          out <- BibString{string(results[1]), string(results[2])}
+        } else
         if results = r_begin.FindSubmatch(scanner.Bytes()) ; results != nil {
-          elem = BibElement{string(results[2]),
-                            string(results[1]),
-                            make(map[string]string)}
+          elem = BibEntry{string(results[2]), string(results[1]), make(map[string]string)}
           state = s_inside
         }
 
@@ -78,6 +78,42 @@ func ReadBibFile (filename string, out chan<- BibElement) {
 
   close(out)
   file.Close()
+}
+
+func ReadBibFiles (filenames []string, out chan<- BibEntry) {
+  var inner chan BibElement
+  dict  := make(map[string]string, 64)
+
+  for _, filename := range filenames {
+    inner = make(chan BibElement, 16)
+    go ReadBibFile(filename, inner)
+
+    for e := range inner {
+      switch elem := e.(type) {
+
+        case BibString:
+          dict[elem.key] = elem.val
+
+        case BibEntry:
+          for key, val := range elem.values {
+            if nval := dict[val]; nval != "" {
+              elem.values[key] = nval
+            }
+          }
+          out <- elem
+
+      }
+    }
+  }
+  close(out)
+}
+
+/* BibEntry */
+
+type BibEntry struct {
+  name   string
+  btype  string
+  values map[string] string
 }
 
 var display_order_set = func(tab []string) map[string] bool {
@@ -127,7 +163,7 @@ func print_bib_attribute(out io.Writer, key string, val string) {
   fmt.Fprintf(out, ",\n")
 }
 
-func (self BibElement) Display (out io.Writer) {
+func (self BibEntry) Display (out io.Writer) {
   fmt.Fprintf(out, "@%s{%s,\n", self.btype, self.name)
   for _, key := range display_order {
     if self.values[key] != "" {
@@ -140,4 +176,15 @@ func (self BibElement) Display (out io.Writer) {
     }
   }
   fmt.Fprintln(out, "}\n")
+}
+
+/* BibString */
+
+type BibString struct {
+  key string
+  val string
+}
+
+func (self BibString) Display (out io.Writer) {
+  fmt.Fprintf(out, "@STRING{ %s = %s }\n", self.key, self.val)
 }
